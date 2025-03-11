@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchChromeHistory, processHistoryForClustering } from "../tools/history_tool";
 import { clusterUrls } from "../tools/cluster_tool";
 import { OpenAI } from "openai";
+import { db, generateInputHash } from "../../db";
+import { Cluster as DBCluster } from "../../db/types";
 
 // Interface for cluster data returned by clusterUrls and this endpoint
 export interface Cluster {
@@ -21,6 +23,24 @@ export async function POST(request: NextRequest) {
       urls = [], 
       baseUrl = "" 
     } = body;
+
+    // Generate hash of input parameters for cache lookup
+    const inputHash = generateInputHash({
+      fetchHistory,
+      maxItems,
+      urls,
+      baseUrl
+    });
+
+    // Check cache first
+    const cachedResult = await db.clusters.findByInputHash(inputHash);
+    if (cachedResult) {
+      return NextResponse.json({
+        success: true,
+        clusters: cachedResult.clusterResult,
+        cached: true
+      });
+    }
 
     // Initialize OpenAI client
     const openaiClient = new OpenAI({
@@ -73,9 +93,16 @@ export async function POST(request: NextRequest) {
         return cluster;
       });
 
+    // Store result in database
+    await db.clusters.create({
+      inputHash,
+      clusterResult: clusters
+    });
+
     return NextResponse.json({
       success: true,
-      clusters
+      clusters,
+      cached: false
     });
   } catch (error) {
     console.error("Error clustering URLs:", error);

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
 import ChatFeed from "./components/ChatFeed";
 import AnimatedButton from "./components/AnimatedButton";
+import HistoryBubbleList from "./components/HistoryBubbleList";
 import Image from "next/image";
 import posthog from "posthog-js";
 
@@ -21,6 +22,11 @@ const Tooltip = ({ children, text }: { children: React.ReactNode; text: string }
 export default function Home() {
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [initialMessage, setInitialMessage] = useState("");
+  const [historyItems, setHistoryItems] = useState<Array<{
+    title: string;
+    url: string;
+    timestamp: string;
+  }>>([]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -157,68 +163,54 @@ export default function Home() {
                     <AnimatedButton type="submit">Run</AnimatedButton>
                   </div>
                 </form>
+                {historyItems.length > 0 && (
+                  <HistoryBubbleList items={historyItems} />
+                )}
                 <div className="grid grid-cols-2 gap-3 w-full">
                   <button
-                    onClick={() =>
-                      startChat(
-                        "Who is the top GitHub contributor to Stagehand by Browserbase?"
-                      )
-                    }
+                    onClick={async () => {
+                      try {
+                        const response = await fetch("/api/history");
+                        if (!response.ok) throw new Error("Failed to fetch history");
+                        const data = await response.json();
+                        setHistoryItems(data.history || []);
+                      } catch (error) {
+                        console.error("Error fetching history:", error);
+                      }
+                    }}
                     className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
                   >
-                    Who is the top contributor to Stagehand?
+                    Collect History
                   </button>
                   <button
-                    onClick={() =>
-                      startChat("How many wins do the 49ers have?")
-                    }
+                    onClick={() => startChat("Cluster my browsing history into categories using /api/cluster")}
+                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
+                  >
+                    Cluster
+                  </button>
+                  <button
+                    onClick={() => startChat("Analyze my clusters for meaningful group names")}
+                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
+                  >
+                    Analyze
+                  </button>
+                  <button
+                    onClick={() => startChat("Generate actionable goals from the clusters")}
+                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
+                  >
+                    Generate Goals
+                  </button>
+                  <button
+                    onClick={() => startChat("Present me with the goals and ways to act on them")}
+                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
+                  >
+                    Accomplish Tasks
+                  </button>
+                  <button
+                    onClick={() => startChat("How many wins do the 49ers have?")}
                     className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
                   >
                     How many wins do the 49ers have?
-                  </button>
-                  <button
-                    onClick={() => startChat("What is Stephen Curry's PPG?")}
-                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
-                  >
-                    What is Stephen Curry&apos;s PPG?
-                  </button>
-                  <button
-                    onClick={() => startChat("How much is NVIDIA stock?")}
-                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
-                  >
-                    How much is NVIDIA stock?
-                  </button>
-                  <button
-                    onClick={() => 
-                      startChat("Fetch and show me my recent browser history")
-                    }
-                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
-                  >
-                    Show me my browser history
-                  </button>
-                  <button
-                    onClick={() => 
-                      startChat("Analyze and cluster my browsing history into categories")
-                    }
-                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
-                  >
-                    Analyze my browsing patterns
-                  </button>
-                  <button
-                    onClick={() => 
-                      startChat("Find websites in my history related to machine learning")
-                    }
-                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
-                  >
-                    Find history related to ML
-                  </button>
-                  <button
-                    onClick={() => 
-                      startChat("What topics have I been researching in my browsing history?")
-                    }
-                    className="p-3 text-sm text-gray-600 border border-gray-200 hover:border-[#FF3B00] hover:text-[#FF3B00] transition-colors font-ppsupply text-left"
-                  >
-                    What have I been researching?
                   </button>
                 </div>
               </div>

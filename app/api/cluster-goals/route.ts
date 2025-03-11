@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { OpenAI } from "openai";
 import { Cluster } from "../cluster/route";
+import { db } from "../../db";
+import { ClusterGoal as DBClusterGoal } from "../../db/types";
 
 // Interface extending clusters with goals
 interface ClusterWithGoals extends Cluster {
@@ -130,8 +132,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use existing AI logic to create goals
-    const goalsPerCluster = await generateGoalsForClusters(clusters, clusterGoals, batch);
+    // Check cache for each cluster's goals
+    const goalsPerCluster = [];
+    for (const cluster of clusters) {
+      // Try to find cached goals
+      const cachedGoals = await db.clusterGoals.findByClusterId(cluster.id);
+      if (cachedGoals) {
+        goalsPerCluster.push({
+          ...cluster,
+          goals: cachedGoals.goal,
+          status: "Complete",
+          cached: true
+        });
+      } else {
+        // Generate new goals if not in cache
+        const clusterWithGoals = await generateGoalsForCluster(cluster, clusterGoals, new OpenAI({
+          apiKey: process.env.OPENAI_API_KEY
+        }));
+
+        // Store goals in database
+        await db.clusterGoals.create({
+          clusterId: cluster.id,
+          goal: clusterWithGoals.goals
+        });
+
+        goalsPerCluster.push({
+          ...clusterWithGoals,
+          cached: false
+        });
+      }
+    }
 
     return NextResponse.json({ 
       success: true, 
