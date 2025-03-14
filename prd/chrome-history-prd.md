@@ -103,7 +103,7 @@ To make the Chrome history and clustering functionality more accessible and reus
        maxItems: z.number().optional().describe("Maximum number of history items to fetch (default: 50)")
      }),
      callback: async (inputParams) => {
-       const maxItems = inputParams.maxItems || 50;
+       const maxItems = inputParams.maxItems || 100;
        const historyItems = await fetchChromeHistory(maxItems);
        
        return {

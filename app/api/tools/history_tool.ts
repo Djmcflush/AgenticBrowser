@@ -88,8 +88,20 @@ export async function fetchChromeHistory(
     fs.copyFileSync(historyPath, tempDbPath);
     
     try {
-      // Open the database in read-only mode
-      const db = new Database(tempDbPath, { readonly: true });
+      // Safely attempt to open the database and handle potential module version mismatches
+      let db;
+      try {
+        // Open the database in read-only mode
+        db = new Database(tempDbPath, { readonly: true });
+      } catch (dbError: any) {
+        // If there's an error with better-sqlite3 (like module version mismatch), log it and return empty
+        console.error("Failed to initialize better-sqlite3 database:", dbError);
+        if (dbError.code === 'ERR_DLOPEN_FAILED') {
+          console.error("This is likely due to a Node.js version mismatch with better-sqlite3.");
+          console.error("You may need to rebuild the module with 'npm rebuild better-sqlite3'");
+        }
+        return [];
+      }
       
       // Query the database for recent history
       const query = `

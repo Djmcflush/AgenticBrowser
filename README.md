@@ -115,7 +115,7 @@ To use this new caching implementation, you'll need a PostgreSQL database:
 1. Check your PostgreSQL installation and user:
 ```bash
 # List your databases and check your username
-psql -U postgres -d postgres
+psql -U postgres -d agentic_browser_dev
 \l
 ```
 Your username will be shown as the "Owner" of the databases.
@@ -142,7 +142,8 @@ Replace 'username' with your PostgreSQL username (found in step 1).
 
 5. Run migrations:
 ```bash
-pnpm migrate:dev
+psql -f app/db/migrations/001_create_clusters_tables.sql
+
 ```
 
 If you encounter authentication issues:

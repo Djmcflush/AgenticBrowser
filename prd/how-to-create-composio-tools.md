@@ -152,7 +152,7 @@ export async function createChromeHistoryTool() {
     inputParams: inputSchema,
     callback: async (inputParams, authCredentials, executeRequest) => {
       const params = inputParams as z.infer<typeof inputSchema>;
-      const maxItems = params.maxItems || 50;
+      const maxItems = params.maxItems || 100;
       const historyItems = await fetchChromeHistory(maxItems);
       
       // Return in the format expected by Composio
@@ -344,7 +344,7 @@ async function useToolDirectly(param1: string, param2: number) {
 **Solution**: Always provide default values for optional parameters:
 
 ```typescript
-const maxItems = params.maxItems || 50;
+const maxItems = params.maxItems || 100;
 ```
 
 ### 4. Not Handling Errors

@@ -26,7 +26,7 @@ This document provides details on reorganizing the existing browser history–re
 ### 3.1. GET /api/history  
 • **Purpose**: Return recent browser history.  
 • **Query Parameters**  
-  - `maxItems` = number of history items to fetch (default 50).  
+  - `maxItems` = number of history items to fetch (default 100).  
 • **Implementation**  
   - Directly calls the function `fetchChromeHistory(maxItems)` from `history_tool.ts`.  
   - Returns the result as JSON.  
@@ -59,7 +59,7 @@ GET /api/history?maxItems=25
 • **Purpose**: Cluster either fetched browser history or user-provided URLs using, for example, `clusterUrls` in `cluster_tool.ts`.  
 • **Request Body**  
   - `fetchHistory` (boolean) – if true, fetch N items of history first.  
-  - `maxItems` (optional, default=50).  
+  - `maxItems` (optional, default=100).  
   - `urls` (array, optional) – user-provided URLs to cluster if `fetchHistory` is false.  
   - `baseUrl` (optional) – an anchor for certain cluster logic.  
 • **Implementation**  

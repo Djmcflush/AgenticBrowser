@@ -3,7 +3,8 @@ import axios from "axios";
 // math library import removed as we're using built-in Math object
 import { OpenAIToolSet } from "composio-core";
 import { z } from "zod";
-import {crawlWebsite} from "./firecrawlTool";
+import { crawlWebsite } from "./firecrawlTool";
+import { db } from "../../db";
 // Interface for URL data
 interface UrlData {
   url: string;
@@ -34,9 +35,34 @@ export async function generateDescriptiveRepresentations(
   console.log("Generating descriptive representations...");
   
   const enhancedUrlData: UrlData[] = [];
+  const urlsToProcess: UrlData[] = [];
+  const urlsMap = new Map<string, UrlData>();
   
-  for (const urlData of urlDataArray) {
-    try {
+  // First, check which URLs already have descriptions in the database
+  const urls = urlDataArray.map(data => data.url);
+  const existingEntries = await db.urlHistory.batchFindByUrls(urls);
+  
+  console.log(`Found ${existingEntries.length} existing descriptions in the database.`);
+  
+  // Create a map for quick lookup
+  const existingEntriesMap = new Map(
+    existingEntries.map(entry => [entry.url, entry])
+  );
+  
+    // Process each URL, using cached descriptions when available
+    for (const urlData of urlDataArray) {
+      const existingEntry = existingEntriesMap.get(urlData.url);
+      
+      // If we have a cached description, use it
+      if (existingEntry && existingEntry.descriptive_representation) {
+        console.log(`Using cached description for ${urlData.url}`);
+        enhancedUrlData.push({
+          ...urlData,
+          description: existingEntry.descriptive_representation
+        });
+      } 
+    // Otherwise add to the list of URLs to process
+    else {
       // Skip if there's no content to analyze
       if (!urlData.content && !urlData.title) {
         console.warn(`Skipping ${urlData.url} due to lack of content`);
@@ -44,16 +70,26 @@ export async function generateDescriptiveRepresentations(
         continue;
       }
       
+      urlsToProcess.push(urlData);
+      urlsMap.set(urlData.url, urlData);
+    }
+  }
+  
+  console.log(`Need to generate descriptions for ${urlsToProcess.length} URLs.`);
+  
+  // Process URLs that need new descriptions
+  for (const urlData of urlsToProcess) {
+    try {
       // Prepare content for analysis (limit length to avoid token limits)
       const contentToAnalyze = `
         URL: ${urlData.url}
         Title: ${urlData.title}
-        Content: ${urlData.content.substring(0, 2000)}...
+        Content: ${urlData.content.substring(0, 20000)}...
       `;
       
       // Generate a descriptive representation using OpenAI
       const response = await openaiClient.chat.completions.create({
-        model: "gpt-4-turbo",
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
@@ -61,7 +97,7 @@ export async function generateDescriptiveRepresentations(
           },
           {
             role: "user",
-            content: `Please create a detailed description (100-200 words) of what this web page is about based on the following information:\n${contentToAnalyze}`
+            content: `Please create a detailed description (50-200 words) of what this web page is about based on the following information:\n${contentToAnalyze}`
           }
         ],
         max_tokens: 300
@@ -76,7 +112,15 @@ export async function generateDescriptiveRepresentations(
         description: generatedDescription
       });
       
-      console.log(`Generated description for ${urlData.url}`);
+      // Store the generated description in the database (without embedding yet)
+      await db.urlHistory.create({
+        url: urlData.url,
+        title: urlData.title,
+        descriptive_representation: generatedDescription,
+        embedding: [] // Empty array for now, will be updated later
+      });
+      
+      console.log(`Generated and stored description for ${urlData.url}`);
     } catch (error) {
       console.error(`Error generating description for ${urlData.url}:`, error);
       // Keep the original data if there's an error
@@ -101,15 +145,51 @@ export async function createEmbeddings(
   console.log("Creating embeddings...");
   
   const embeddingDataArray: EmbeddingData[] = [];
+  const urlsToProcess: UrlData[] = [];
   
+  // First, check which URLs already have embeddings in the database
+  const urls = urlDataArray.map(data => data.url);
+  const existingEntries = await db.urlHistory.batchFindByUrls(urls);
+  
+  console.log(`Found ${existingEntries.length} URLs in the database.`);
+  
+  // Create a map for quick lookup
+  const existingEntriesMap = new Map(
+    existingEntries.map(entry => [entry.url, entry])
+  );
+  
+  // Process each URL, using cached embeddings when available
   for (const urlData of urlDataArray) {
+    const existingEntry = existingEntriesMap.get(urlData.url);
+    
+    // Skip if there's no description to embed
+    if (!urlData.description) {
+      console.warn(`Skipping embedding for ${urlData.url} due to lack of description`);
+      continue;
+    }
+    
+    // If we have a cached embedding, use it
+    if (existingEntry && existingEntry.embedding && Array.isArray(existingEntry.embedding) && existingEntry.embedding.length > 0) {
+      console.log(`Using cached embedding for ${urlData.url}`);
+      embeddingDataArray.push({
+        ...urlData,
+        embedding: existingEntry.embedding
+      });
+      continue;
+    }
+    // Otherwise add to the list of URLs to process
+    else {
+      urlsToProcess.push(urlData);
+    }
+  }
+  
+  console.log(`Need to generate embeddings for ${urlsToProcess.length} URLs.`);
+  
+  // Process URLs that need new embeddings
+  const batchUpdateData = [];
+  
+  for (const urlData of urlsToProcess) {
     try {
-      // Skip if there's no description to embed
-      if (!urlData.description) {
-        console.warn(`Skipping embedding for ${urlData.url} due to lack of description`);
-        continue;
-      }
-      
       // Generate embedding using OpenAI
       const response = await openaiClient.embeddings.create({
         model: "text-embedding-3-small",
@@ -129,13 +209,31 @@ export async function createEmbeddings(
         embedding
       });
       
+      // Store the embedding in the database
+      batchUpdateData.push({
+        url: urlData.url,
+        title: urlData.title,
+        descriptive_representation: urlData.description,
+        embedding: embedding
+      });
+      
       console.log(`Created embedding for ${urlData.url}`);
     } catch (error) {
       console.error(`Error creating embedding for ${urlData.url}:`, error);
     }
   }
   
-  console.log(`Embedding creation completed. Created ${embeddingDataArray.length} embeddings.`);
+  // Batch update the database
+  if (batchUpdateData.length > 0) {
+    try {
+      await db.urlHistory.batchCreate(batchUpdateData);
+      console.log(`Stored ${batchUpdateData.length} embeddings in the database.`);
+    } catch (error) {
+      console.error("Error storing embeddings in database:", error);
+    }
+  }
+  
+  console.log(`Embedding creation completed. Created/retrieved ${embeddingDataArray.length} embeddings.`);
   return embeddingDataArray;
 }
 
@@ -165,12 +263,29 @@ function euclideanDistance(vec1: number[], vec2: number[]): number {
  * @param minPoints Minimum points to form a cluster (default: 2)
  * @returns Array of URL data objects with cluster assignments
  */
+/**
+ * Deduplicate URL data array based on URLs
+ * @param urlDataArray Array of URL data objects
+ * @returns Deduplicated array of URL data objects
+ */
+function deduplicateUrlData(urlDataArray: UrlData[]): UrlData[] {
+  const seen = new Set<string>();
+  return urlDataArray.filter(data => {
+    if (seen.has(data.url)) {
+      console.log(`Removing duplicate URL: ${data.url}`);
+      return false;
+    }
+    seen.add(data.url);
+    return true;
+  });
+}
+
 export function createClusters(
   embeddingDataArray: EmbeddingData[],
-  epsilon: number = 0.2,
+  epsilon: number = 0.75,
   minPoints: number = 2
 ): ClusteredData[] {
-  console.log("Creating clusters with DBScan...");
+  console.log(`Creating clusters with DBScan... Processing ${embeddingDataArray.length} embeddings with epsilon=${epsilon}, minPoints=${minPoints}`);
   
   // Initialize all points as unvisited (-1) and not part of any cluster (null)
   const visited: boolean[] = new Array(embeddingDataArray.length).fill(false);
@@ -239,7 +354,19 @@ export function createClusters(
     }
   }
   
+  // Count items in each cluster
+  const clusterCounts = clusteredData.reduce((acc, item) => {
+    acc[item.cluster] = (acc[item.cluster] || 0) + 1;
+    return acc;
+  }, {} as Record<number, number>);
+  
+  // Log cluster distribution
   console.log(`Clustering completed. Found ${currentCluster} clusters.`);
+  console.log('Cluster distribution:');
+  Object.entries(clusterCounts).forEach(([clusterId, count]) => {
+    console.log(`- Cluster ${clusterId}: ${count} items`);
+  });
+  
   return clusteredData;
 }
 
@@ -372,14 +499,17 @@ export async function clusterUrls(
         ? [{ url: baseUrl, title: baseUrl, content: rawUrlData, description: "" }]
         : [];
     
-    // Step 2: Generate descriptive representations
-    const enhancedUrlData = await generateDescriptiveRepresentations(urlDataArray, openaiClient);
+    // Step 2: Deduplicate URLs and generate descriptive representations
+    const deduplicatedUrlData = deduplicateUrlData(urlDataArray);
+    console.log(`Deduplicated URLs: ${urlDataArray.length} -> ${deduplicatedUrlData.length}`);
+    const enhancedUrlData = await generateDescriptiveRepresentations(deduplicatedUrlData, openaiClient);
     
     // Step 3: Create embeddings
     const embeddingDataArray = await createEmbeddings(enhancedUrlData, openaiClient);
     
     // Step 4: Create clusters with DBScan
-    const clusteredData = createClusters(embeddingDataArray);
+    // Default to a larger epsilon value of 0.75 to allow more inclusive clusters
+    const clusteredData = createClusters(embeddingDataArray, 0.75);
     
     // Step 5: Analyze clusters
     const clusterAnalysis = await analyzeClusters(clusteredData, openaiClient);
@@ -414,7 +544,8 @@ export async function createClusterTool() {
         url: z.string(),
         title: z.string().optional()
       })
-    ).optional().describe("Optional array of pre-processed URL data (bypasses firecrawl)")
+    ).optional().describe("Optional array of pre-processed URL data (bypasses firecrawl)"),
+    epsilon: z.number().optional().describe("Distance threshold for clustering (default: 0.1, smaller values create more clusters)")
   });
   
   // Create a custom tool for URL clustering
@@ -437,12 +568,63 @@ export async function createClusterTool() {
       }));
       
       // Call the clusterUrls function
-      const result = await clusterUrls(
-        params.baseUrl,
-        params.maxUrls || 20,
-        openaiClient,
-        processedUrls
-      );
+      // First get the base URL, max URLs, and preprocessed URLs
+      const baseUrl = params.baseUrl;
+      const maxUrls = params.maxUrls || 20;
+      
+      // Extract the embedding parameters
+      let epsilon = params.epsilon;
+      
+      // Define a custom clusterUrls function that allows passing the epsilon parameter
+      const customClusterUrls = async () => {
+        console.log(`Starting URL clustering process for ${baseUrl}`);
+        
+        // Step 1: Use pre-processed URLs if provided, otherwise firecrawl the website
+        let rawUrlData = processedUrls 
+          ? processedUrls.map(item => ({
+              url: item.url,
+              title: item.title || "",
+              content: "",
+              description: ""
+            }))
+          : await crawlWebsite(baseUrl, maxUrls);
+        
+        // Ensure urlDataArray is always an array of UrlData objects
+        const urlDataArray: UrlData[] = Array.isArray(rawUrlData) 
+          ? rawUrlData as UrlData[] 
+          : typeof rawUrlData === 'string' 
+            ? [{ url: baseUrl, title: baseUrl, content: rawUrlData, description: "" }]
+            : [];
+        
+        // Step 2: Deduplicate URLs and generate descriptive representations
+        const deduplicatedUrlData = deduplicateUrlData(urlDataArray);
+        console.log(`Deduplicated URLs: ${urlDataArray.length} -> ${deduplicatedUrlData.length}`);
+        const enhancedUrlData = await generateDescriptiveRepresentations(deduplicatedUrlData, openaiClient);
+        
+        // Step 3: Create embeddings
+        const embeddingDataArray = await createEmbeddings(enhancedUrlData, openaiClient);
+        
+        // Step 4: Create clusters with DBScan
+        // Use the provided epsilon or default to 0.75
+        const epsilonValue = epsilon || 0.75;
+        console.log(`Creating clusters with epsilon value: ${epsilonValue}. Lower values create more numerous, smaller clusters.`);
+        const clusteredData = createClusters(embeddingDataArray, epsilonValue);
+        
+        // Step 5: Analyze clusters
+        const clusterAnalysis = await analyzeClusters(clusteredData, openaiClient);
+        
+        console.log("URL clustering process completed successfully.");
+        
+        return {
+          baseUrl,
+          totalUrls: urlDataArray.length,
+          totalClusters: Object.keys(clusterAnalysis).filter(id => id !== "-1").length,
+          clusterAnalysis
+        };
+      };
+      
+      // Execute the custom clustering function
+      const result = await customClusterUrls();
       
       // Return in the format expected by Composio
       return {

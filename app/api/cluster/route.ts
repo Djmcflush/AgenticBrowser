@@ -19,9 +19,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { 
       fetchHistory = false, 
-      maxItems = 50, 
+      maxItems = 100, 
       urls = [], 
-      baseUrl = "" 
+      baseUrl = "",
+      forceGenerate = false 
     } = body;
 
     // Generate hash of input parameters for cache lookup
@@ -32,14 +33,20 @@ export async function POST(request: NextRequest) {
       baseUrl
     });
 
-    // Check cache first
-    const cachedResult = await db.clusters.findByInputHash(inputHash);
-    if (cachedResult) {
-      return NextResponse.json({
-        success: true,
-        clusters: cachedResult.clusterResult,
-        cached: true
-      });
+    // Check cache first if not forcing generation
+    if (!forceGenerate) {
+      const cachedResult = await db.clusters.findByInputHash(inputHash);
+      if (cachedResult) {
+        console.log("Found cached clusters for inputHash:", inputHash);
+        return NextResponse.json({
+          success: true,
+          clusters: cachedResult.clusterResult,
+          cached: true
+        });
+      }
+      console.log("No cached clusters found for inputHash:", inputHash, "- generating new clusters");
+    } else {
+      console.log("Force generate flag is true - bypassing cache and generating new clusters");
     }
 
     // Initialize OpenAI client
@@ -96,7 +103,7 @@ export async function POST(request: NextRequest) {
     // Store result in database
     await db.clusters.create({
       inputHash,
-      clusterResult: clusters
+      clusterResult: JSON.stringify(clusters)
     });
 
     return NextResponse.json({

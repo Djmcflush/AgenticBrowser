@@ -66,6 +66,67 @@ export const db = {
       return result.rows[0];
     },
   },
+
+  urlHistory: {
+    async findByUrl(url: string) {
+      const result = await pool.query(
+        'SELECT * FROM url_history WHERE url = $1',
+        [url]
+      );
+      return result.rows[0];
+    },
+
+    async batchFindByUrls(urls: string[]) {
+      const result = await pool.query(
+        'SELECT * FROM url_history WHERE url = ANY($1)',
+        [urls]
+      );
+      return result.rows;
+    },
+
+    async create(data: { 
+      url: string; 
+      title: string; 
+      descriptive_representation: string; 
+      embedding: number[] 
+    }) {
+      const result = await pool.query(
+        'INSERT INTO url_history (url, title, descriptive_representation, embedding) VALUES ($1, $2, $3, $4) RETURNING *',
+        [data.url, data.title, data.descriptive_representation, data.embedding]
+      );
+      return result.rows[0];
+    },
+
+    async batchCreate(dataArray: Array<{ 
+      url: string; 
+      title: string; 
+      descriptive_representation: string; 
+      embedding: number[] 
+    }>) {
+      // Create a transaction for batch insertion
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        
+        const promises = dataArray.map(data => 
+          client.query(
+            'INSERT INTO url_history (url, title, descriptive_representation, embedding) VALUES ($1, $2, $3, $4) ON CONFLICT (url) DO UPDATE SET title = $2, descriptive_representation = $3, embedding = $4, updatedat = CURRENT_TIMESTAMP RETURNING *',
+            [data.url, data.title, data.descriptive_representation, data.embedding]
+          )
+        );
+        
+        const results = await Promise.all(promises);
+        await client.query('COMMIT');
+        
+        return results.map(r => r.rows[0]);
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+    }
+  }
 };
 
 // Export pool for direct access if needed
